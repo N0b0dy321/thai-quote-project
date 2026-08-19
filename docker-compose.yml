@@ -1,0 +1,106 @@
+# docker-compose.yml
+# ไฟล์นี้เป็นตัวกำหนดและควบคุมทุก service (container) ในโปรเจค "Thai Quote of the Day"
+# มีทั้งหมด 3 services ที่ทำงานร่วมกัน: nginx -> app -> redis
+
+services:
+
+  # ---------------------------------------------
+  # SERVICE 1: nginx  (reverse proxy / entry point)
+  # ---------------------------------------------
+  nginx:
+    # ใช้ official image ของ nginx เวอร์ชัน alpine (ขนาดเล็ก) จาก Docker Hub
+    image: nginx:1.27-alpine
+
+    # ตั้งชื่อ container ให้อ่านง่ายตอนรัน docker ps
+    container_name: quote_nginx
+
+    # แม็พ port 8080 ของเครื่อง host ไปยัง port 80 ภายใน container
+    # ผู้ใช้จะเข้าเว็บผ่าน http://localhost:8080
+    ports:
+      - "8080:80"
+
+    # นำไฟล์ config ที่เขียนเองจากเครื่อง host เข้าไปแทนที่ config default ของ nginx
+    # :ro หมายถึง read-only ป้องกันไม่ให้ container แก้ไขไฟล์ config นี้ได้
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+    # กำหนดให้ nginx ต้องรอให้ service "app" เริ่มทำงาน (อย่างน้อยคือถูกสร้างขึ้น) ก่อน
+    depends_on:
+      - app
+
+    # เชื่อม service นี้เข้ากับ network ที่ชื่อ quote_network
+    networks:
+      - quote_network
+
+  # ---------------------------------------------
+  # SERVICE 2: app  (Flask backend - custom image ที่ build เอง)
+  # ---------------------------------------------
+  app:
+    # แทนที่จะใช้ image สำเร็จรูป เราสั่งให้ build จาก Dockerfile ในโฟลเดอร์ ./app
+    # นี่คือ image เดียวในโปรเจคที่สร้างขึ้นเอง (custom image) ตามข้อกำหนดของงาน
+    build:
+      context: ./app        # โฟลเดอร์ที่เก็บ Dockerfile และ source code
+      dockerfile: Dockerfile # ชื่อไฟล์ Dockerfile ที่ใช้ build
+
+    container_name: quote_app
+
+    # กำหนดค่า environment variable ให้ Flask app รู้ว่าจะเชื่อมต่อ redis ที่ host ไหน
+    # ค่า "redis" คือชื่อ service ของ container Redis ด้านล่าง
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+    # ให้ app service รอให้ redis "healthy" ก่อน ค่อยเริ่มทำงาน
+    # ป้องกันปัญหา Flask พยายามเชื่อมต่อ redis ก่อนที่ redis จะพร้อม
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    networks:
+      - quote_network
+
+    # ตั้งค่า restart policy ให้ container เริ่มใหม่อัตโนมัติถ้าเกิด error/crash
+    restart: unless-stopped
+
+  # ---------------------------------------------
+  # SERVICE 3: redis  (in-memory data store สำหรับนับจำนวนการเข้าชม)
+  # ---------------------------------------------
+  redis:
+    # ใช้ official image ของ redis เวอร์ชัน alpine จาก Docker Hub โดยตรง
+    image: redis:7-alpine
+
+    container_name: quote_redis
+
+    # เก็บข้อมูลของ redis ไว้ใน named volume ชื่อ redis_data
+    # เพื่อให้ข้อมูล (เช่น total_views) ไม่หายไปแม้ container จะถูกลบแล้วสร้างใหม่
+    volumes:
+      - redis_data:/data
+
+    # กำหนด healthcheck โดยใช้คำสั่ง redis-cli ping
+    # ถ้า redis ตอบกลับว่า PONG แปลว่า service พร้อมใช้งานแล้ว
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+    networks:
+      - quote_network
+
+    restart: unless-stopped
+
+# ---------------------------------------------
+# NETWORKS
+# ---------------------------------------------
+# สร้าง custom bridge network ชื่อ quote_network
+# ทำให้ทั้ง 3 containers คุยกันผ่านชื่อ service ได้โดยตรง (internal DNS)
+networks:
+  quote_network:
+    driver: bridge
+
+# ---------------------------------------------
+# VOLUMES
+# ---------------------------------------------
+# ประกาศ named volume สำหรับเก็บข้อมูลถาวรของ redis
+volumes:
+  redis_data:

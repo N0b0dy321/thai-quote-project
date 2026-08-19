@@ -1,0 +1,7 @@
+# requirements.txt
+# ระบุ package ของ Python ที่จำเป็นต้องใช้ พร้อมกำหนดเวอร์ชันตายตัว (pin version)
+# เพื่อให้ build ได้ผลลัพธ์เดิมทุกครั้ง (reproducible build)
+
+flask==3.0.3
+redis==5.0.8
+gunicorn==22.0.0
